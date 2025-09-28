@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NAFLD AI | Drug Discovery</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        html {
+            scroll-behavior: smooth;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0A0F1F;
+            overflow-x: hidden;
+            position: relative;
+        }
+        .background-glow {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: 
+                radial-gradient(ellipse at 20% 25%, rgba(29, 78, 216, 0.2), transparent 80%),
+                radial-gradient(ellipse at 80% 70%, rgba(109, 40, 217, 0.15), transparent 80%);
+            z-index: 0;
+        }
+        .main-content { position: relative; z-index: 1; }
+        .glass-card {
+            background: rgba(17, 24, 39, 0.5);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .btn-glow { box-shadow: 0 0 20px rgba(59, 130, 246, 0.5), 0 0 5px rgba(59, 130, 246, 0.3); }
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+            cursor: pointer;
+            width: 100%;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            height: 6px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            margin-top: -5px;
+            height: 16px;
+            width: 16px;
+            background: #ffffff;
+            border-radius: 50%;
+            box-shadow: 0 0 5px #3B82F6;
+        }
+        .cell-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+            gap: 10px;
+        }
+        .hepatocyte {
+            position: relative;
+            width: 100%;
+            padding-bottom: 100%; /* Aspect ratio 1:1 */
+            border-radius: 50%;
+            transition: background-color 0.5s ease, box-shadow 0.5s ease;
+            animation: pulse 5s infinite ease-in-out;
+        }
+        .fat-droplet {
+            position: absolute;
+            background-color: #FBBF24; /* Amber-400 */
+            border-radius: 50%;
+            transition: all 0.5s ease;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="text-gray-200">
+    <div class="background-glow"></div>
+    <div id="root" class="main-content"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { jsPDF } = window.jspdf;
+        
+        const API_BASE_URL = "http://127.0.0.1:8000";
+
+        // --- REAL API Functions ---
+        const predictDrugProfileAPI = async (designParams) => {
+            try {
+                const response = await fetch(`${API_BASE_URL}/predict`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(designParams)
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error("Error calling prediction API:", error);
+                return { safety_risk: "Error", efficacy_score: "N/A", alt_effect: 0 };
+            }
+        };
+
+        const simulateTrialAPI = async (patientData, drug) => {
+             try {
+                const requestBody = { patientData, drug };
+                const response = await fetch(`${API_BASE_URL}/simulate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+                 if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error("Error calling simulation API:", error);
+                const flatline = Array(12).fill(patientData.alt);
+                return { placebo: flatline, treatment: flatline };
+            }
+        };
+
+        // --- 2D Structure Diagram Component ---
+        const StructureDiagram = () => (
+            <svg viewBox="0 0 200 150" className="w-full h-full p-4">
+                <style>{`
+                    .bond { stroke: #CBD5E1; stroke-width: 2px; }
+                    .atom-text { fill: white; font-size: 14px; font-family: 'Inter', sans-serif; font-weight: bold; text-anchor: middle; alignment-baseline: middle;}
+                `}</style>
+                <polygon points="70,110 40,90 40,50 70,30 100,50 100,90" fill="none" className="bond" />
+                <polygon points="100,90 100,50 130,40 145,70 130,100" fill="none" className="bond" />
+                <line x1="70" y1="30" x2="70" y2="10" className="bond" />
+                <line x1="70" y1="110" x2="70" y2="130" className="bond" />
+                <line x1="130" y1="40" x2="145" y2="20" className="bond" />
+                <text x="70" y="140" className="atom-text">O</text>
+                <text x="30" y="90" className="atom-text">N</text>
+                <text x="30" y="50" className="atom-text">CH₃</text>
+                <text x="100" y="38" className="atom-text">N</text>
+                <text x="155" y="70" className="atom-text">N</text>
+                <text x="155" y="15" className="atom-text">CH₃</text>
+            </svg>
+        );
+        
+        // --- UI Components ---
+        const Slider = ({ label, value, setValue, min, max, step }) => (
+            <div>
+                <div className="flex justify-between items-center mb-1">
+                    <label className="text-sm font-medium text-gray-300">{label}</label>
+                    <span className="text-sm font-bold text-blue-400">{value}</span>
+                </div>
+                <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => setValue(parseFloat(e.target.value))} />
+            </div>
+        );
+
+        const FatDroplet = ({ size, top, left }) => (
+            <div className="fat-droplet" style={{ width: `${size * 100}%`, height: `${size * 100}%`, top: `${top * 100}%`, left: `${left * 100}%`, opacity: size > 0.01 ? 1 : 0, transform: `translate(-50%, -50%) scale(${size > 0.01 ? 1 : 0})` }} />
+        );
+
+        const Hepatocyte = ({ baseFat, baseInflammation, fatReduction, inflammationReduction }) => {
+            const currentInflammation = useMemo(() => baseInflammation * (1 - inflammationReduction / 100), [baseInflammation, inflammationReduction]);
+            const currentFat = useMemo(() => baseFat * (1 - fatReduction / 100), [baseFat, fatReduction]);
+            const cellColor = `hsl(0, 80%, ${70 - currentInflammation * 40}%)`;
+            const pulseDuration = 2 + (3 * (1 - currentInflammation));
+            const fatDroplets = useMemo(() => {
+                const count = Math.floor(currentFat * 10);
+                return Array.from({ length: count }, (_, i) => ({ id: i, size: Math.max(0, 0.1 + (currentFat - i/10) * 0.2 + (Math.random() - 0.5) * 0.05), top: 0.2 + Math.random() * 0.6, left: 0.2 + Math.random() * 0.6, }));
+            }, [currentFat]);
+
+            return (
+                <div className="hepatocyte" style={{ backgroundColor: cellColor, boxShadow: `0 0 ${currentInflammation * 20}px ${cellColor}`, animationDuration: `${pulseDuration}s` }}>
+                    {fatDroplets.map(droplet => <FatDroplet key={droplet.id} {...droplet} />)}
+                </div>
+            );
+        };
+
+        const ClinicalReport = ({ chartResults, patientData, selectedDrugName }) => {
+            const handleSaveReport = async () => {
+                if (!chartResults) return;
+
+                const doc = new jsPDF();
+                
+                doc.setFont("helvetica", "bold");
+                doc.setFontSize(16);
+                doc.text("NAFLD AI Simulation Report", 105, 20, null, null, "center");
+
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(12);
+                doc.text(`Date: ${new Date().toLocaleDateString()}`, 20, 35);
+                
+                doc.setFont("helvetica", "bold");
+                doc.text("Patient Profile:", 20, 50);
+                doc.setFont("helvetica", "normal");
+                doc.text(`- Age: ${patientData.age}`, 25, 60);
+                doc.text(`- BMI: ${patientData.bmi}`, 25, 65);
+                doc.text(`- AST Level: ${patientData.ast}`, 25, 70);
+                doc.text(`- Initial ALT: ${patientData.alt.toFixed(1)}`, 25, 75);
+
+                doc.setFont("helvetica", "bold");
+                doc.text(`Simulation for Drug: ${selectedDrugName}`, 20, 90);
+                
+                const initialALT = patientData.alt;
+                const finalPlacebo = chartResults.placebo[11];
+                const finalTreatment = chartResults.treatment[11];
+                const netChange = finalTreatment - finalPlacebo;
+                const interpretation = getInterpretation().text;
+
+                doc.setFont("helvetica", "normal");
+                doc.text(`- Projected Final ALT (Placebo): ${finalPlacebo.toFixed(1)}`, 25, 100);
+                doc.text(`- Projected Final ALT (Treated): ${finalTreatment.toFixed(1)}`, 25, 105);
+                doc.text(`- Net Change: ${netChange.toFixed(1)}`, 25, 110);
+                
+                doc.setFont("helvetica", "bold");
+                doc.text("Clinical Interpretation:", 20, 125);
+                doc.setFont("helvetica", "normal");
+                const splitInterpretation = doc.splitTextToSize(interpretation, 170);
+                doc.text(splitInterpretation, 25, 132);
+
+                const chartCanvas = document.getElementById('clinicalChart');
+                const chartImage = chartCanvas.toDataURL('image/png', 1.0);
+                doc.addPage();
+                doc.setFontSize(16);
+                doc.text("Clinical Outcome (ALT Levels)", 105, 20, null, null, "center");
+                doc.addImage(chartImage, 'PNG', 15, 40, 180, 90);
+
+                const cellsCanvas = await html2canvas(document.getElementById('cellular-response-grid'));
+                const cellsImage = cellsCanvas.toDataURL('image/png', 1.0);
+                doc.addPage();
+                doc.setFontSize(16);
+                doc.text("Live Cellular Response", 105, 20, null, null, "center");
+                doc.addImage(cellsImage, 'PNG', 15, 40, 180, 120);
+
+                doc.save(`NAFLD_Report_${selectedDrugName.replace(/ /g, '_')}.pdf`);
+            };
+
+            if (!chartResults) {
+                return (
+                    <div className="p-6 glass-card rounded-lg h-full flex items-center justify-center">
+                        <div className="text-center text-gray-400">Run simulation to generate clinical report...</div>
+                    </div>
+                );
+            }
+
+            const initialALT = patientData.alt;
+            const finalPlacebo = chartResults.placebo[11];
+            const finalTreatment = chartResults.treatment[11];
+            const netChange = finalTreatment - finalPlacebo;
+            
+            const getInterpretation = () => {
+                if (netChange < -10) return { text: "The selected candidate demonstrated a significant therapeutic effect, markedly reducing projected ALT levels compared to placebo.", color: "text-green-400"};
+                if (netChange < 0) return { text: "The treatment shows a modest beneficial effect on ALT levels.", color: "text-blue-400"};
+                if (netChange > 10) return { text: "Warning: The simulation indicates a potential hepatotoxic effect, with ALT levels projected to be significantly higher than placebo.", color: "text-red-400"};
+                return { text: "The drug candidate showed a neutral or negligible effect on ALT levels in this simulation.", color: "text-gray-400"};
+            };
+            
+            const interpretation = getInterpretation();
+
+            return (
+                <div className="p-6 glass-card rounded-lg h-full flex flex-col">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-2xl font-bold text-white">Clinical Outcome Report</h3>
+                        <button onClick={handleSaveReport} className="bg-green-600 text-white font-bold py-1 px-3 text-sm rounded-lg hover:bg-green-700 transition-all">
+                            <i className="fas fa-save mr-2"></i>Save Report
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-center">
+                        <div className="bg-gray-800/50 p-3 rounded-lg"><div className="text-sm text-gray-400">Initial ALT</div><div className="text-xl font-bold">{initialALT.toFixed(1)}</div></div>
+                        <div className="bg-gray-800/50 p-3 rounded-lg"><div className="text-sm text-gray-400">Final ALT (Placebo)</div><div className="text-xl font-bold">{finalPlacebo.toFixed(1)}</div></div>
+                        <div className="bg-gray-800/50 p-3 rounded-lg"><div className="text-sm text-gray-400">Final ALT (Drug)</div><div className="text-xl font-bold">{finalTreatment.toFixed(1)}</div></div>
+                        <div className="bg-gray-800/50 p-3 rounded-lg"><div className="text-sm text-gray-400">Net Change</div><div className={`text-xl font-bold ${netChange < 0 ? 'text-green-400' : 'text-red-400'}`}>{netChange.toFixed(1)}</div></div>
+                    </div>
+                    <div className="flex-grow h-64 mb-4"><canvas id="clinicalChart"></canvas></div>
+                    <div>
+                        <h4 className="font-semibold text-white mb-2">Clinical Interpretation</h4>
+                        <p className={`text-sm ${interpretation.color}`}>{interpretation.text}</p>
+                    </div>
+                </div>
+            )
+        };
+        
+        // --- Page/Step Components ---
+        const HeroPage = ({ onStart }) => (
+            <div className="relative text-center py-16 md:py-24 px-4 overflow-hidden">
+                <div className="relative z-10">
+                    <h1 className="text-5xl md:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 leading-tight">
+                        AI-Powered Drug Response Prediction for NAFLD
+                    </h1>
+                    <p className="text-lg text-gray-200 mt-4 max-w-2xl mx-auto">
+                        Leverage our AI-powered simulation platform to design, test, and predict therapeutic outcomes for NAFLD, reducing time and cost in pre-clinical research.
+                    </p>
+                    
+                    <div className="max-w-4xl mx-auto mt-10 text-left">
+                        <h2 className="text-2xl font-bold text-center text-white mb-6">What You Can Do:</h2>
+                        <div className="grid md:grid-cols-3 gap-8">
+                            <div className="glass-card p-6 rounded-lg">
+                                <i className="fas fa-drafting-compass text-3xl text-blue-400 mb-4"></i>
+                                <h3 className="font-bold text-lg text-white mb-2">Design Drugs</h3>
+                                <p className="text-sm text-gray-400">Design candidate drugs with adjustable therapeutic and molecular properties.</p>
+                            </div>
+                            <div className="glass-card p-6 rounded-lg">
+                                <i className="fas fa-chart-line text-3xl text-blue-400 mb-4"></i>
+                                <h3 className="font-bold text-lg text-white mb-2">Visualize Response</h3>
+                                <p className="text-sm text-gray-400">Visualize liver response with interactive clinical and cellular simulations.</p>
+                            </div>
+                            <div className="glass-card p-6 rounded-lg">
+                                 <i className="fas fa-microscope text-3xl text-blue-400 mb-4"></i>
+                                <h3 className="font-bold text-lg text-white mb-2">Explore Effects</h3>
+                                <p className="text-sm text-gray-400">Explore effects at a cellular level to understand fat and inflammation.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onClick={onStart} className="mt-12 inline-block bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 transition-all btn-glow">
+                        Start Designing
+                    </button>
+                </div>
+            </div>
+        );
+
+        const DesignPage = ({ result, setResult, isLoading, setIsLoading, savedDrugs, setSavedDrugs, goToNextStep }) => {
+            const [params, setParams] = useState({ anti_fat_effect: 8, anti_inflammatory_effect: 8, anti_fibrotic_effect: 6, mol_wt: 350.0, log_p: 3.0, num_h_donors: 2, num_h_acceptors: 4 });
+            const [viewMode, setViewMode] = useState('2d'); // '2d' or '3d'
+            const setParam = (key, value) => setParams(prev => ({ ...prev, [key]: value }));
+            const handleDesign = async () => { setIsLoading(true); setResult(null); const p = await predictDrugProfileAPI(params); setResult(p); setIsLoading(false); };
+            const [name, setName] = useState('Drug ' + (savedDrugs.length));
+            useEffect(() => { if(result) setName('Candidate ' + (savedDrugs.length + 1)) }, [result, savedDrugs.length]);
+            const handleSave = () => { if (name && result && !savedDrugs.find(d => d.name === name)) { setSavedDrugs(prev => [...prev, { name, ...result, designParams: params }]); } };
+
+            return (
+                <div className="p-4 md:p-8 relative overflow-hidden">
+                    <div className="relative z-10">
+                        <h2 className="text-3xl md:text-4xl font-bold text-center mb-8 text-white">💊 Drug Design & Analysis</h2>
+                        <div className="flex flex-col lg:flex-row gap-8">
+                            <div className="w-full lg:w-1/3">
+                                 <div className="w-full p-6 glass-card rounded-lg flex flex-col h-full">
+                                    <h2 className="text-2xl font-bold mb-4 text-white">1. Design Laboratory</h2>
+                                    <div className="space-y-4 flex-grow">
+                                        <div>
+                                            <h3 className="font-semibold text-lg text-blue-300 mb-2">Therapeutic Profile</h3>
+                                            <Slider label="Anti-Fat Effect" value={params.anti_fat_effect} setValue={v => setParam('anti_fat_effect', v)} min={0} max={10} step={1} />
+                                            <Slider label="Anti-Inflammatory Effect" value={params.anti_inflammatory_effect} setValue={v => setParam('anti_inflammatory_effect', v)} min={0} max={10} step={1} />
+                                            <Slider label="Anti-Fibrotic Effect" value={params.anti_fibrotic_effect} setValue={v => setParam('anti_fibrotic_effect', v)} min={0} max={10} step={1} />
+                                        </div>
+                                        <div>
+                                            <h3 className="font-semibold text-lg text-blue-300 mb-2">Molecular Profile</h3>
+                                            <Slider label="Molecular Weight" value={params.mol_wt.toFixed(1)} setValue={v => setParam('mol_wt', v)} min={0} max={1000} step={0.1} />
+                                            <Slider label="LogP" value={params.log_p.toFixed(1)} setValue={v => setParam('log_p', v)} min={-5} max={10} step={0.1} />
+                                            <Slider label="H-Bond Donors" value={params.num_h_donors} setValue={v => setParam('num_h_donors', v)} min={0} max={20} step={1} />
+                                            <Slider label="H-Bond Acceptors" value={params.num_h_acceptors} setValue={v => setParam('num_h_acceptors', v)} min={0} max={20} step={1} />
+                                        </div>
+                                    </div>
+                                    <button onClick={handleDesign} disabled={isLoading} className="w-full mt-6 bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-all disabled:opacity-50 btn-glow">
+                                        {isLoading ? 'Analyzing...' : 'Design Drug'}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="w-full lg:w-2/3 space-y-8">
+                                 <div className="p-6 glass-card rounded-lg">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h2 className="text-2xl font-bold text-white">Designed Drug</h2>
+                                        {result && (
+                                            <div className="flex space-x-1 bg-gray-800/50 p-1 rounded-lg">
+                                                <button onClick={() => setViewMode('2d')} className={`px-3 py-1 text-sm rounded-md ${viewMode === '2d' ? 'bg-blue-600' : 'hover:bg-gray-700'}`}>2D</button>
+                                                <button onClick={() => setViewMode('3d')} className={`px-3 py-1 text-sm rounded-md ${viewMode === '3d' ? 'bg-blue-600' : 'hover:bg-gray-700'}`}>3D</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="h-80 mb-4 rounded-lg bg-black/20 flex items-center justify-center">
+                                        {!result && <div className="text-center text-gray-400"><i className="fas fa-flask text-4xl mb-2"></i><p>Your molecule will appear here.</p></div>}
+                                        {result && viewMode === '2d' && <StructureDiagram />}
+                                        {result && viewMode === '3d' && <MoleculeRenderer />}
+                                    </div>
+                                    {result && (
+                                        <>
+                                            <div className="grid grid-cols-3 gap-4 text-center">
+                                                <div className="bg-gray-800/50 p-3 rounded"><div className="text-sm text-gray-400">Predicted Safety</div><div className="text-xl font-bold text-white">{result.safety_risk}</div></div>
+                                                <div className="bg-gray-800/50 p-3 rounded"><div className="text-sm text-gray-400">Efficacy Score</div><div className="text-xl font-bold text-white">{result.efficacy_score}</div></div>
+                                                <div className="bg-gray-800/50 p-3 rounded"><div className="text-sm text-gray-400">Simulated ALT Effect</div><div className="text-xl font-bold text-white">{result.alt_effect.toFixed(2)}</div></div>
+                                            </div>
+                                            <div className="mt-6 border-t border-gray-700 pt-4 flex items-center gap-4">
+                                                <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Candidate Name" className="flex-grow p-2 border border-gray-600 bg-gray-900 rounded text-white" />
+                                                <button onClick={handleSave} className="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition-all btn-glow">Save</button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                                 <div className="p-6 glass-card rounded-lg">
+                                    <h2 className="text-2xl font-bold mb-4 text-white">Saved Candidates for Trial</h2>
+                                    <div className="space-y-2 pr-2 max-h-40 overflow-y-auto">
+                                        {savedDrugs.length < 1 ? (<p className="text-gray-400 text-sm">No candidates saved yet.</p>) : (
+                                            savedDrugs.map(drug => (
+                                                <div key={drug.name} className="p-3 bg-gray-800/50 rounded-md flex justify-between items-center hover:bg-gray-800 transition">
+                                                    <div><i className="fas fa-pills text-blue-400 mr-3"></i><span className="font-semibold">{drug.name}</span></div>
+                                                    <span className="text-xs font-mono bg-blue-900/50 text-blue-300 px-2 py-1 rounded">ALT Effect: {drug.alt_effect.toFixed(2)}</span>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="text-center mt-12">
+                            <button onClick={goToNextStep} disabled={savedDrugs.length < 1} className="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed btn-glow">
+                                Proceed to Simulation
+                            </button>
+                            {savedDrugs.length < 1 && <p className="text-xs text-gray-500 mt-2">Please save at least one candidate to proceed.</p>}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+
+        const SimulationPage = ({ savedDrugs, goToPrevStep }) => {
+            const [patientData, setPatientData] = useState({ age: 50, bmi: 32.0, ast: 80, alt: 110 });
+            const [selectedDrugName, setSelectedDrugName] = useState(savedDrugs.length > 0 ? savedDrugs[0].name : "");
+            const [isLoading, setIsLoading] = useState(false);
+            const [chartResults, setChartResults] = useState(null);
+            const [cellularEffects, setCellularEffects] = useState({ fat: 0, inflammation: 0 });
+            const chartInstance = useRef(null);
+            
+            const cells = useMemo(() => Array.from({ length: 150 }, () => ({ baseFat: 0.4 + Math.random() * 0.6, baseInflammation: 0.4 + Math.random() * 0.6 })), []);
+
+            const handleSimulate = async () => {
+                setIsLoading(true); setChartResults(null);
+                const drug = savedDrugs.find(d => d.name === selectedDrugName);
+                if (!drug) { setIsLoading(false); return; }
+                const simResults = await simulateTrialAPI(patientData, drug);
+                setChartResults(simResults);
+                const fatReduction = drug.designParams.anti_fat_effect * 10;
+                const inflammationReduction = drug.designParams.anti_inflammatory_effect * 10;
+                setCellularEffects({ fat: fatReduction, inflammation: inflammationReduction });
+                setIsLoading(false);
+            };
+
+            useEffect(() => {
+                if (chartResults) {
+                    if (chartInstance.current) chartInstance.current.destroy();
+                    const ctx = document.getElementById('clinicalChart').getContext('2d');
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'line', data: {
+                            labels: Array.from({ length: 12 }, (_, i) => `M${i + 1}`),
+                            datasets: [
+                                { label: 'Placebo', data: chartResults.placebo, borderColor: '#6B7280', tension: 0.4, pointBackgroundColor: '#6B7280' },
+                                { label: selectedDrugName, data: chartResults.treatment, borderColor: '#3B82F6', tension: 0.4, pointBackgroundColor: '#3B82F6', backgroundColor: 'rgba(59, 130, 246, 0.2)', fill: true }
+                            ]
+                        }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255,255,255,0.1)' } }, y: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255,255,255,0.1)' }, title: { display: true, text: 'ALT Level', color: '#9CA3AF'} } }, plugins: { legend: { labels: { color: '#D1D5DB' } } } }
+                    });
+                }
+            }, [chartResults, selectedDrugName]);
+
+            return (
+                <div className="p-4 md:p-8">
+                    <h2 className="text-3xl md:text-4xl font-bold text-center mb-8 text-white">🔬 Digital Twin Simulation</h2>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        {/* Left Column: Controls */}
+                        <div className="lg:col-span-1 space-y-6">
+                             <div className="p-6 glass-card rounded-lg">
+                                <h3 className="text-2xl font-bold text-white mb-4">Patient Profile</h3>
+                                {[{label: 'Age', key: 'age'}, {label: 'BMI', key: 'bmi'}, {label: 'AST Level', key: 'ast'}, {label: 'Initial ALT', key: 'alt'}].map(item => (
+                                    <div key={item.key} className="mb-4">
+                                        <label className="text-sm">{item.label}</label>
+                                        <input type="number" value={patientData[item.key]} onChange={e => setPatientData(p => ({ ...p, [item.key]: parseFloat(e.target.value) }))} className="w-full p-2 bg-gray-800 rounded border border-gray-600" />
+                                    </div>
+                                ))}
+                             </div>
+                             <div className="p-6 glass-card rounded-lg">
+                                <h3 className="text-2xl font-bold text-white mb-4">Select Drug Candidate</h3>
+                                <select value={selectedDrugName} onChange={e => setSelectedDrugName(e.target.value)} className="w-full p-2 bg-gray-800 rounded border border-gray-600 mb-4" disabled={savedDrugs.length === 0}>
+                                    {savedDrugs.map(d => <option key={d.name}>{d.name}</option>)}
+                                </select>
+                                <button onClick={handleSimulate} disabled={isLoading || savedDrugs.length === 0} className="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-all disabled:opacity-50 btn-glow">
+                                    {isLoading ? 'Simulating...' : 'Run 12-Month Trial'}
+                                </button>
+                             </div>
+                        </div>
+
+                        {/* Right Column: Chart and Cells */}
+                        <div className="lg:col-span-2 space-y-8">
+                           <ClinicalReport chartResults={chartResults} patientData={patientData} selectedDrugName={selectedDrugName} />
+                            <div id="cellular-response-grid" className="p-6 glass-card rounded-lg">
+                                <h3 className="text-2xl font-bold text-white mb-4">Live Cellular Response</h3>
+                                <div className="cell-grid">
+                                    {cells.map((cell, i) => (
+                                        <Hepatocyte 
+                                            key={i}
+                                            baseFat={cell.baseFat} 
+                                            baseInflammation={cell.baseInflammation}
+                                            fatReduction={cellularEffects.fat}
+                                            inflammationReduction={cellularEffects.inflammation}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                     <div className="text-center mt-12">
+                        <button onClick={goToPrevStep} className="bg-white/10 text-white font-bold py-3 px-8 rounded-lg hover:bg-white/20 transition-all">
+                            Back to Design
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main App Controller ---
+        const App = () => {
+            const [step, setStep] = useState('home'); // home, design, simulation
+            const [savedDrugs, setSavedDrugs] = useState([]);
+            const [result, setResult] = useState(null);
+            const [isLoading, setIsLoading] = useState(false);
+
+            const renderStep = () => {
+                switch(step) {
+                    case 'design':
+                        return <DesignPage result={result} setResult={setResult} isLoading={isLoading} setIsLoading={setIsLoading} savedDrugs={savedDrugs} setSavedDrugs={setSavedDrugs} goToNextStep={() => setStep('simulation')} />;
+                    case 'simulation':
+                        return <SimulationPage savedDrugs={savedDrugs} goToPrevStep={() => setStep('design')} />;
+                    case 'home':
+                    default:
+                        return <HeroPage onStart={() => setStep('design')} />;
+                }
+            };
+            
+            return (
+                <div className="min-h-screen">
+                     <nav className="p-4 md:px-8 flex justify-between items-center">
+                        <div className="text-2xl font-bold cursor-pointer" onClick={() => setStep('home')}>NAFLD AI</div>
+                        {step !== 'home' && (
+                             <div><button onClick={() => setStep('home')} className="bg-white/10 px-4 py-2 rounded-lg text-white font-semibold hover:bg-white/20 transition">Back to Home</button></div>
+                        )}
+                    </nav>
+                    {renderStep()}
+                </div>
+            );
+        };
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
+</body>
+</html>
+
