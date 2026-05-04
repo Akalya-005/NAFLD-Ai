@@ -153,3 +153,6 @@ In the "Sites" section, drag and drop your entire project folder onto the page.
 Netlify will deploy your site in seconds and give you a public URL.
 
 You can now share your Netlify URL with anyone to access the live application.
+
+
+Linkedin: https://www.linkedin.com/in/akalya-k-548937294?utm_source=share_via&utm_content=profile&utm_medium=member_android
